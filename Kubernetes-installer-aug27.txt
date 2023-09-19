@@ -1,0 +1,141 @@
+Kunernetes Setup:
+`````````````````
+Min config:  4GB RAM and 2 CPU
+``````````````````````````````````
+50.19.5.81 | 172.31.19.68  (Master)
+54.175.125.68 | 172.31.27.238 (worker1)
+54.242.91.231 | 172.31.26.12 (worker2)
+
+Set the Hostname using Below Commands
+```````````````````````````````````````
+
+sudo hostnamectl set-hostname master-node
+sudo hostnamectl set-hostname worker-node1
+sudo hostnamectl set-hostname worker-node2
+
+Add below Entry in /etc/hosts
+`````````````````````````````
+vi /etc/hosts
+
+192.168.50.149 master-node master-node
+172.31.27.238 worker-node1 worker-node1
+172.31.26.12 worker-node2 worker-node2
+
+Disable the SE-Linux
+``````````````````````
+
+sudo setenforce 0
+sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+
+reboot
+
+Configure Kubernetes Repository
+`````````````````````````````````
+
+cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+EOF
+
+Install kubelet, kubeadm, and kubectl
+``````````````````````````````````````
+sudo yum install -y kubelet kubeadm kubectl
+systemctl enable kubelet
+systemctl start kubelet
+systemctl status kubelet
+
+
+Enable K8s networking in Kernel Modiule
+`````````````````````````````````````````
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+sudo modprobe overlay
+sudo modprobe br_netfilter
+
+# sysctl params required by setup, params persist across reboots
+`````````````````````````````````````````````````````````````````
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+
+# Apply sysctl params without reboot
+sudo sysctl --system
+
+
+sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+yum install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
+systemctl restart docker
+systemctl enable docker
+
+systemctl status containerd
+systemctl start containerd
+
+If Firewalld is Running the follow below Steps Else NO Need.
+
+sudo firewall-cmd --permanent --add-port=6443/tcp
+sudo firewall-cmd --permanent --add-port=2379-2380/tcp
+sudo firewall-cmd --permanent --add-port=10250/tcp
+sudo firewall-cmd --permanent --add-port=10251/tcp
+sudo firewall-cmd --permanent --add-port=10252/tcp
+sudo firewall-cmd --permanent --add-port=10255/tcp
+sudo firewall-cmd --reload
+
+
+
+systemctl status containerd
+
+If any containerd related error.
+
+containerd 1.4.9 Unimplemented desc = unknown service runtime.v1alpha2.RuntimeService (ERROR)
+
+cat > /etc/containerd/config.toml <<EOF
+[plugins."io.containerd.grpc.v1.cri"]
+  systemd_cgroup = true
+EOF
+systemctl restart containerd
+systemctl status containerd
+
+
+
+
+Creating a cluster with kubeadm
+
+kubeadm init --apiserver-advertise-address=192.168.50.149 --pod-network-cidr=192.168.0.0/24
+
+
+
+export KUBECONFIG=/etc/kubernetes/admin.conf
+
+If not Root:
+
+ mkdir -p $HOME/.kube
+ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+ sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+
+Set Up Pod Network
+
+kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
+
+
+
+sudo kubectl get nodes
+
+sudo kubectl get pods --all-namespaces
+
+Below command in Worker Node.
+`````````````````````````````````
+kubeadm join --discovery-token cfgrty.1234567890jyrfgd --discovery-token-ca-cert-hash sha256:1234..cdef 1.2.3.4:6443
